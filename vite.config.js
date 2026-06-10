@@ -16,7 +16,7 @@ export default defineConfig({
         background_color: '#f5f0e8',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: '/',
+        start_url: '/AcervoDigital/',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -54,5 +54,5 @@ export default defineConfig({
       }
     })
   ],
-  base: './'
+  base: '/AcervoDigital/'
 })
