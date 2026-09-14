@@ -105,8 +105,14 @@ import { ref, computed, inject, onMounted } from 'vue'
 import BookCard from '../components/BookCard.vue'
 import { db } from '../firebase.js'
 import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore'
+import { currentUser } from '../composables/useAuth.js'
 
 const showToast = inject('showToast')
+
+// Caminho de um documento dentro da biblioteca do usuário logado
+function meuDoc(id) {
+  return doc(db, 'usuarios', currentUser.value.uid, 'livros', id)
+}
 
 const books        = ref([])
 const loading      = ref(true)
@@ -126,7 +132,7 @@ const filters = [
 // ── Firebase listener ──────────────────────────────────────────────────────
 onMounted(() => {
   try {
-    onSnapshot(collection(db, 'livros'), snap => {
+    onSnapshot(collection(db, 'usuarios', currentUser.value.uid, 'livros'), snap => {
       books.value   = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       loading.value = false
     })
@@ -171,7 +177,7 @@ function countByStatus(status) {
 // ── Salvar (vem do card expandido) ────────────────────────────────────────
 async function saveBook({ id, status, nota, comentario }) {
   try {
-    await updateDoc(doc(db, 'livros', id), { status, nota, comentario })
+    await updateDoc(meuDoc(id), { status, nota, comentario })
     showToast({ message: 'Livro atualizado!', type: 'success' })
   } catch (e) {
     showToast({ message: 'Erro ao atualizar o livro.', type: 'error' })
@@ -188,7 +194,7 @@ async function deleteBook() {
   if (!deleteTarget.value) return
   const name = deleteTarget.value.titulo || deleteTarget.value.title
   try {
-    await deleteDoc(doc(db, 'livros', deleteTarget.value.id))
+    await deleteDoc(meuDoc(deleteTarget.value.id))
     showToast({ message: `"${name}" removido da biblioteca.` })
   } catch (e) {
     showToast({ message: 'Erro ao remover o livro.', type: 'error' })

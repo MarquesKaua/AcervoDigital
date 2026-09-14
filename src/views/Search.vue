@@ -71,8 +71,14 @@ import SearchBar from '../components/SearchBar.vue'
 import BookCard  from '../components/BookCard.vue'
 import { db } from '../firebase.js'
 import { collection, addDoc, getDocs, serverTimestamp } from 'firebase/firestore'
+import { currentUser } from '../composables/useAuth.js'
 
 const showToast = inject('showToast')
+
+// Coleção de livros do usuário logado (cada usuário só enxerga a sua)
+function minhaColecao() {
+  return collection(db, 'usuarios', currentUser.value.uid, 'livros')
+}
 
 // ── Estado ─────────────────────────────────────────────────────────────────
 const query     = ref('')
@@ -88,7 +94,32 @@ const suggestions = [
   'O Alquimista', 'Clarice Lispector', 'Fiódor Dostoiévski'
 ]
 
-// ── Busca na Open Library API ───────────────────────────────────────────────
+// ── Busca na Google Books API ───────────────────────────────────────────────
+const GOOGLE_BOOKS_KEY = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY || ''
+
+function montarUrl(q, restringirIdioma) {
+  const params = new URLSearchParams({ q, maxResults: '20' })
+  if (restringirIdioma) params.set('langRestrict', 'pt')
+  if (GOOGLE_BOOKS_KEY) params.set('key', GOOGLE_BOOKS_KEY)
+  return `https://www.googleapis.com/books/v1/volumes?${params.toString()}`
+}
+
+function mapearItem(item) {
+  const info = item.volumeInfo || {}
+  const capa = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || ''
+  return {
+    id:          item.id,
+    title:       info.title || 'Título desconhecido',
+    author:      (info.authors || []).join(', '),
+    image:       capa.replace('http://', 'https://'),
+    description: info.description || '',
+    year:        (info.publishedDate || '').slice(0, 4),
+    category:    (info.categories || [])[0] || '',
+    pages:       info.pageCount || null,
+    publisher:   info.publisher || ''
+  }
+}
+
 async function fetchBooks() {
   const q = query.value.trim()
   if (!q) return
@@ -98,31 +129,27 @@ async function fetchBooks() {
   searched.value = false
 
   try {
-    const res = await fetch(
-      `https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=20&fields=key,title,author_name,cover_i,first_publish_year,subject,publisher`
-    )
+    const res = await fetch(montarUrl(q, true))
+
+    if (res.status === 429) {
+      error.value = 'Muitas buscas em pouco tempo (limite da API do Google Books). Espere um minuto e tente de novo — ou configure uma chave de API gratuita para aumentar o limite (veja o README).'
+      return
+    }
     if (!res.ok) throw new Error('Erro na requisição à API')
 
     const data = await res.json()
     lastQuery.value = q
     searched.value  = true
+    results.value   = (data.items || []).map(mapearItem)
 
-    results.value = (data.docs || []).map(item => {
-      const coverId = item.cover_i
-      return {
-        id:          item.key,                          // ex: /works/OL45883W
-        title:       item.title || 'Título desconhecido',
-        author:      (item.author_name || []).join(', '),
-        image:       coverId
-                       ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
-                       : '',
-        description: '',
-        year:        item.first_publish_year?.toString() || '',
-        category:    (item.subject || [])[0] || '',
-        pages:       null,
-        publisher:   (item.publisher || [])[0] || ''
+    if (results.value.length === 0) {
+      // Sem resultado em português: tenta de novo sem restringir o idioma
+      const res2 = await fetch(montarUrl(q, false))
+      if (res2.ok) {
+        const data2 = await res2.json()
+        results.value = (data2.items || []).map(mapearItem)
       }
-    })
+    }
   } catch (e) {
     error.value = 'Não foi possível buscar os livros. Verifique sua conexão.'
   } finally {
@@ -133,20 +160,20 @@ async function fetchBooks() {
 // ── Carregar IDs da biblioteca ──────────────────────────────────────────────
 async function loadLibraryIds() {
   try {
-    const snap = await getDocs(collection(db, 'livros'))
-    snap.forEach(doc => libraryIds.value.add(doc.data().openLibraryId))
+    const snap = await getDocs(minhaColecao())
+    snap.forEach(doc => libraryIds.value.add(doc.data().googleBooksId))
   } catch (e) { /* Firebase não configurado */ }
 }
 
-// ── Adicionar ao Firebase ───────────────────────────────────────────────────
+// ── Adicionar à biblioteca do usuário ───────────────────────────────────────
 async function addBook(book) {
   if (libraryIds.value.has(book.id)) {
     showToast({ message: 'Este livro já está na sua biblioteca.', type: '' })
     return
   }
   try {
-    await addDoc(collection(db, 'livros'), {
-      openLibraryId: book.id,
+    await addDoc(minhaColecao(), {
+      googleBooksId: book.id,
       titulo:     book.title,
       autor:      book.author,
       capa:       book.image,

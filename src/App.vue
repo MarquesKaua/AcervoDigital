@@ -15,6 +15,14 @@
             Minha Biblioteca
             <span v-if="bookCount > 0" class="nav-badge">{{ bookCount }}</span>
           </router-link>
+
+          <template v-if="currentUser">
+            <span class="user-pill" :title="currentUser.email">
+              👤 {{ currentUser.displayName || currentUser.email }}
+            </span>
+            <button class="nav-link nav-logout" @click="sair">Sair</button>
+          </template>
+          <router-link v-else to="/login" class="nav-link">Entrar</router-link>
         </nav>
 
         <button class="menu-toggle" @click="menuOpen = !menuOpen" aria-label="Menu">
@@ -27,6 +35,11 @@
         <router-link to="/"           class="nav-link">Início</router-link>
         <router-link to="/buscar"     class="nav-link">Explorar</router-link>
         <router-link to="/biblioteca" class="nav-link">Minha Biblioteca</router-link>
+        <template v-if="currentUser">
+          <span class="user-pill">👤 {{ currentUser.displayName || currentUser.email }}</span>
+          <button class="nav-link nav-logout" @click="sair">Sair</button>
+        </template>
+        <router-link v-else to="/login" class="nav-link">Entrar</router-link>
       </div>
     </header>
 
@@ -61,9 +74,13 @@
 </template>
 
 <script setup>
-import { ref, computed, provide, onMounted } from 'vue'
+import { ref, watch, provide, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { db } from './firebase.js'
 import { collection, onSnapshot } from 'firebase/firestore'
+import { currentUser, logout } from './composables/useAuth.js'
+
+const router = useRouter()
 
 // ── Toast ──────────────────────────────────────────────────────────────────
 const toasts = ref([])
@@ -78,18 +95,33 @@ function showToast({ message, type = '' }) {
 
 provide('showToast', showToast)
 
-// ── Contagem da biblioteca ─────────────────────────────────────────────────
+// ── Sessão ─────────────────────────────────────────────────────────────────
+async function sair() {
+  await logout()
+  showToast({ message: 'Você saiu da sua conta.' })
+  router.push('/')
+}
+
+// ── Contagem da biblioteca (apenas do usuário logado) ──────────────────────
 const bookCount = ref(0)
 const menuOpen  = ref(false)
+let pararListener = null
 
-onMounted(() => {
+function observarBiblioteca(user) {
+  if (pararListener) { pararListener(); pararListener = null }
+  bookCount.value = 0
+  if (!user) return
   try {
-    onSnapshot(collection(db, 'livros'), snap => {
+    pararListener = onSnapshot(collection(db, 'usuarios', user.uid, 'livros'), snap => {
       bookCount.value = snap.size
     })
   } catch (e) {
     // Firebase não configurado ainda — ignora
   }
+}
+
+onMounted(() => {
+  watch(currentUser, observarBiblioteca, { immediate: true })
 })
 </script>
 
@@ -159,6 +191,19 @@ onMounted(() => {
   padding: 0 6px;
   border-radius: 100px;
   line-height: 1.6;
+}
+
+.user-pill {
+  font-size: .8125rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-logout {
+  color: var(--accent) !important;
 }
 
 /* ── Menu mobile ─────────────────────────────────────────────────────────── */
